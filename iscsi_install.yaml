@@ -39,9 +39,6 @@
         client_list:
           - 'iqn.{{ year }}-{{ month }}.{{ client_iqn_name_authority }}:{{ client_meaningful_name }}'
 
-    - name: create meaningful name
-      ansible.builtin.command: "targetcli /iscsi create {{ srv_iqn }}"
-
     - name: Run iscsi server tasks
       ansible.builtin.include_tasks: ./tasks/iscsi-server-prep.yaml
       tags:
