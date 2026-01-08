@@ -1,0 +1,48 @@
+---
+- name: iscsi server install
+  hosts: all
+  become: true
+  become_user: root
+  pre_tasks:
+
+  handlers:
+    - name: Restart iscsi
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: restarted
+      with_items:
+        - iscsi
+        - iscsid
+
+  tasks:
+    - name: Set facts for iscsi server
+      ansible.builtin.set_fact:
+        backstore_name: "{{ config_backstore_name | default('test') }}"
+        iqn_server_name_authority: "{{ config_server_iqn_name_authority | default('test') }}"
+        iqn_server_meaningful_name: "{{ config_server_meaningful_name | default('iscsi_test') }}"
+        client_iqn_name_authority: "{{ config_client_iqn_name_authority | default('local.test') }}"
+        client_meaningful_name: "{{ config_client_meaningful_name | default('test') }}"
+
+    - name: Get time data for iqn configuration
+      ansible.builtin.command: date +%Y_%m
+      register: date_result
+      changed_when: false
+
+    - name: Configure date facts for SBD configuration
+      ansible.builtin.set_fact:
+        year: "{{ date_result.stdout | split('_') | first }}"
+        month: "{{ date_result.stdout | split('_') | last }}"
+
+    - name: Configure iqn facts for SBD configuration
+      ansible.builtin.set_fact:
+        srv_iqn: 'iqn.{{ year }}-{{ month }}.com.suse:test'
+        client_list:
+          - 'iqn.{{ year }}-{{ month }}.{{ client_iqn_name_authority }}:{{ client_meaningful_name }}'
+
+    #- name: create meaningful name
+    #  ansible.builtin.command: "targetcli /srv/iscsi create {{ srv_iqn }}"
+
+    - name: Run iscsi server tasks
+      ansible.builtin.include_tasks: ./tasks/iscsi-server-prep.yaml
+      tags:
+        - server
