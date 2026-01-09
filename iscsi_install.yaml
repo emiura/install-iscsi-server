@@ -17,11 +17,10 @@
   tasks:
     - name: Set facts for iscsi server
       ansible.builtin.set_fact:
-        backstore_name: "{{ config_backstore_name | default('test') }}"
-        iqn_server_name_authority: "{{ config_server_iqn_name_authority | default('test') }}"
-        iqn_server_meaningful_name: "{{ config_server_meaningful_name | default('iscsi_test') }}"
-        client_iqn_name_authority: "{{ config_client_iqn_name_authority | default('local.test') }}"
-        client_meaningful_name: "{{ config_client_meaningful_name | default('test') }}"
+        backstore_name: "srvtest"
+        qa_systems: ["s390x", "qam"]
+        disks: ["sbd", "ocfs2", "drbd", "clustermd"]
+        qasapusers: "acarvajal apappas dawei.pang emiura jkohoutek julian.diaz junguo.wang llzhao lpalovsky mpagot vasilios.anastasiadis xiaojing.liu zcjia"
 
     - name: Get time data for iqn configuration
       ansible.builtin.command: date +%Y_%m
@@ -35,14 +34,93 @@
 
     - name: Configure iqn facts for SBD configuration
       ansible.builtin.set_fact:
-        srv_iqn: 'iqn.{{ year }}-{{ month }}.com.suse:test'
-        client_list:
-          - 'iqn.{{ year }}-{{ month }}.{{ client_iqn_name_authority }}:{{ client_meaningful_name }}'
+        srv_iqn: 'iqn.{{ year }}-{{ month }}.com.suse:{{ backstore_name }}'
 
-    - name: Run iscsi server tasks
-      ansible.builtin.include_tasks: ./tasks/iscsi-server-prep.yaml
-      tags:
-        - server
+    - name: Remove conflicting packages from iscsi server for 12-SP5
+      community.general.zypper:
+        name: "{{ item }}"
+        state: absent
+      with_items:
+        - lio-utils           # Only exists in 12SP5
+        - python-rtslib       # Only exists in 12SP5
+        - python-configshell  # Only exists in 12SP5
+        - targetcli           # Only exists in 12SP5
+      when: ansible_distribution_major_version == '12'
+      register: result
+      until: result is succeeded
+      retries: 3
+      delay: 60
+      # SLE12 ships both targetcli and targetcli-fb. They both provide the targetcli
+      # binary but they are not compatible. Neither are packages like
+      # python-configshell and python-configshell-fb. This is not a problem in SLE15
+      # as we only ship fb there.
+
+    - name: Install targetcli-fb for SLE12
+      community.general.zypper:
+        name: targetcli-fb
+        state: present
+      when: ansible_distribution_major_version == '12'
+      register: result
+      until: result is succeeded
+      retries: 3
+      delay: 60
+
+    - name: Install targetcli-fb and open-iscsi for SLE15
+      community.general.zypper:
+        name: "{{ item }}"
+        state: present
+      with_items:
+        - targetcli-fb
+        - open-iscsi
+      when: (ansible_distribution_major_version == '15') or
+            (ansible_distribution_major_version == '16')
+      register: result
+      until: result is succeeded
+      retries: 3
+      delay: 60
+
+    - name: create meaningful name
+      ansible.builtin.command: "targetcli /iscsi create {{ srv_iqn }}"
+
+    - name: Create openqa directory
+      ansible.builtin.command: "mkdir /srv/iscsi/0-openqa"
+
+    - name: Create luns for QA systems
+      vars:
+        blocks: 7
+        sizesbd: "4M"
+        sizeother: "1024M"
+      ansible.builtin.command: >
+        targetcli /backstores/fileio create
+        name={{ item.0 }}-{{ item.1 }}-{{ item.2 }}
+        file_or_dev=/srv/iscsi/{{ item.0 }}-{{ item.1 }}-{{ item.2 }}
+        size={{ (item.1 == 'sbd') | ternary(sizesbd, sizeother) }}
+      args:
+        creates: "/srv/iscsi/{{ item.0 }}-{{ item.1 }}-{{ item.2 }}"
+      loop: "{{ qa_systems | product(disks) | product(range(0, blocks) | list) | map('flatten') | list }}"
+
+    - name: Create openQA luns
+      vars:
+        blocks: 7
+        blsize: "1G"
+      ansible.builtin.command: "targetcli backstores/fileio create name=lun-{{ item }} file_or_dev=/srv/iscsi/0-openqa/lun-{{ item }} size={{ blsize }}"
+      loop: "{{ range(0, blocks) | list }}"
+
+    - name: Create users luns
+      vars:
+        blocks: 24
+        blsize: "4M"
+      ansible.builtin.command: "targetcli backstores/fileio create name={{ item.0 }}-{{ item.1 }} file_or_dev=/srv/iscsi/{{ item.0 }}-{{ item.1 }} size={{ blsize }}"
+      loop: "{{ qasapusers.split() | product(range(0, blocks )) | list }}"
+
+    - name: Open iscsi port 3260/tcp
+      become: true
+      ansible.posix.firewalld:
+        port: 3260/tcp
+        state: enabled
+        permanent: true
+        immediate: true
+      when: ansible_distribution_major_version == '16'
 
 - name: Check iscsi server running
   hosts: all
