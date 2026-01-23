@@ -12,6 +12,7 @@
         disks: ["sbd", "ocfs2", "drbd", "clustermd"]
         qasapusers: "acarvajal apappas dawei.pang emiura jkohoutek julian.diaz junguo.wang llzhao lpalovsky mpagot vasilios.anastasiadis xiaojing.liu zcjia"
 
+
     - name: Get time data for iqn configuration
       ansible.builtin.command: date +%Y_%m
       register: date_result
@@ -68,6 +69,14 @@
       until: result is succeeded
       retries: 3
       delay: 60
+
+    - name: reset targetcli
+      ansible.builtin.command: "targetcli clearconfig confirm=True"
+      when: clear_setup | default(false) | bool
+
+    - name: cleanup files
+      ansible.builtin.shell: rm -rf /srv/iscsi/*
+      when: clear_setup | default(false) | bool
 
     - name: create meaningful name
       ansible.builtin.command: "targetcli /iscsi create {{ srv_iqn }}"
