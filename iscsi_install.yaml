@@ -3,16 +3,6 @@
   hosts: all
   become: true
   become_user: root
-  pre_tasks:
-
-  handlers:
-    - name: Restart iscsi
-      ansible.builtin.systemd:
-        name: "{{ item }}"
-        state: restarted
-      with_items:
-        - iscsi
-        - iscsid
 
   tasks:
     - name: Set facts for iscsi server
@@ -122,10 +112,5 @@
         immediate: true
       when: ansible_distribution_major_version == '16'
 
-- name: Check iscsi server running
-  hosts: all
-  gather_facts: yes
-  tasks:
     - name: Run iscsiadm discovery
-      ansible.builtin.command: "iscsiadm -m discovery -t st -p {{ item }}"
-      loop: "{{ ansible_play_batch }}"
+      ansible.builtin.command: "iscsiadm -m discovery -t st -p {{ inventory_hostname }}"
